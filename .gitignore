@@ -1,0 +1,6 @@
+voice.mp3
+model.pkl
+results/
+__pycache__/
+*.pth
+*.bin
