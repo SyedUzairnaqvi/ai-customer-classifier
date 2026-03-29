@@ -1,14 +1,13 @@
-# AI Customer Insight Classifier
+# 🚀 AI Customer Insight Analyzer
 
-Built an ML-powered system to classify customer issues into categories like bug, billing, and feedback.
+An AI-powered system that analyzes customer messages.
 
-## Features
-- Real-time text classification
-- Sentiment & urgency detection
-- Streamlit UI
+## 🔥 Features
+- Chat-style interface
+- Hybrid AI (rules + ML)
+- Sentiment + urgency detection
+- Confidence score
+- Optional AI voice
 
-## Tech Stack
-Python, Scikit-learn, NLP, Streamlit
-
-## Demo
-(Add your video link)
+## ▶️ Run
+python -m streamlit run app.py
