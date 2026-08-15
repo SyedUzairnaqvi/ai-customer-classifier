@@ -1,0 +1,85 @@
+{
+  "dataset": "BANKING77",
+  "train_rows": 10003,
+  "test_rows": 3080,
+  "original_intents": 77,
+  "business_classes": [
+    "account",
+    "billing",
+    "card",
+    "transfer"
+  ],
+  "accuracy": 0.9289,
+  "macro_f1": 0.9289,
+  "classification_report": {
+    "account": {
+      "precision": 0.9279141104294478,
+      "recall": 0.9453125,
+      "f1-score": 0.9365325077399381,
+      "support": 640.0
+    },
+    "billing": {
+      "precision": 0.9253875968992248,
+      "recall": 0.9182692307692307,
+      "f1-score": 0.9218146718146718,
+      "support": 1040.0
+    },
+    "card": {
+      "precision": 0.9380252100840336,
+      "recall": 0.9302083333333333,
+      "f1-score": 0.9341004184100419,
+      "support": 960.0
+    },
+    "transfer": {
+      "precision": 0.918918918918919,
+      "recall": 0.9272727272727272,
+      "f1-score": 0.9230769230769231,
+      "support": 440.0
+    },
+    "accuracy": 0.9288961038961039,
+    "macro avg": {
+      "precision": 0.9275614590829063,
+      "recall": 0.9302656978438228,
+      "f1-score": 0.9288811302603939,
+      "support": 3080.0
+    },
+    "weighted avg": {
+      "precision": 0.9289274861867004,
+      "recall": 0.9288961038961039,
+      "f1-score": 0.9288825686585408,
+      "support": 3080.0
+    }
+  },
+  "confusion_matrix_labels": [
+    "account",
+    "billing",
+    "card",
+    "transfer"
+  ],
+  "confusion_matrix": [
+    [
+      605,
+      11,
+      20,
+      4
+    ],
+    [
+      21,
+      955,
+      34,
+      30
+    ],
+    [
+      23,
+      42,
+      893,
+      2
+    ],
+    [
+      3,
+      24,
+      5,
+      408
+    ]
+  ]
+}

@@ -1,4 +1,7 @@
-streamlit
-transformers
-torch
-gtts
+streamlit>=1.35,<2
+pandas>=2.0,<3
+scikit-learn>=1.4,<2
+joblib>=1.3,<2
+transformers>=4.40,<5
+torch>=2.2,<3
+gtts>=2.5,<3
