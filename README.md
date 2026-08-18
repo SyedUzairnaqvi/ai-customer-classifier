@@ -1,79 +1,103 @@
 # AI Customer Insight Analyzer
 
-A hybrid NLP application for financial customer-support analysis.
+A hybrid NLP customer-support analytics application with **ML + MySQL + Streamlit dashboard + Power BI-ready analytics**.
 
 ## Live Demo
 
 **Streamlit App:** https://ai-customer-classifier-v6yuiq2aqqdhooajzs3eum.streamlit.app/
 
-**Current release:** FINAL — this repository is using the `ai_customer_insight_analyzer_FINAL` project version as the main/root version.
+**Current release:** FINAL — this repository uses `ai_customer_insight_analyzer_FINAL` as the main/root version.
 
-## What it does
+## Core AI
 
-Given a customer message, the system produces:
+For every customer message the system produces:
 
-1. **Intent** — routes the message into four business-level categories: `account`, `billing`, `card`, or `transfer`.
-2. **Sentiment** — uses a pretrained 3-class RoBERTa sentiment model to classify the message as negative, neutral, or positive.
-3. **Urgency** — applies transparent business rules to identify high/medium/low priority signals.
-4. **Routing recommendation** — suggests the support team that should handle the message.
-5. **Confidence and alternatives** — exposes the intent model probability and top three predictions. Low-confidence intent predictions are marked **Needs Review**.
+- **Intent:** account, billing, card, or transfer
+- **Sentiment:** negative, neutral, or positive
+- **Urgency:** high, medium, or low
+- **Routing:** Auto-Routable or Needs Review
+- **Confidence:** intent probability and top alternative predictions
 
-## ML architecture
+The model stack is TF-IDF + Logistic Regression for intent, RoBERTa for sentiment, and transparent business rules for urgency.
+
+## Analytics architecture
 
 ```text
-Customer message
+Customer Message
        |
-       +----------------------+------------------+
-       |                      |                  |
-       v                      v                  v
-TF-IDF + Logistic        RoBERTa           Business rules
-Regression               Sentiment          for urgency
-       |                      |                  |
-       v                      v                  v
-    Intent               Sentiment          Urgency
-       |                      |                  |
-       +----------------------+------------------+
+       v
+AI Analyzer
+(Intent + Sentiment + Urgency + Routing)
+       |
+       +----------------------+
+       |                      |
+       v                      v
+Streamlit UI             MySQL Database
+Analyzer + Dashboard     customer_analyses
                               |
                               v
-                   Routing + confidence
+                     Power BI-ready SQL Views
                               |
                               v
-                          Streamlit
+                       Power BI Dashboard
 ```
 
-### Why this is a hybrid system
+## MySQL
 
-- **Logistic Regression** handles intent classification from sparse TF-IDF text features.
-- **RoBERTa** is used only for three-class sentiment analysis.
-- **Rules** handle operational urgency because business priority is not the same thing as sentiment probability.
-- **Confidence thresholding** prevents low-confidence intent predictions from being automatically routed.
+The app now persists successful analyses to MySQL when these environment variables/secrets are configured:
 
-## Dataset
+- `MYSQL_HOST`
+- `MYSQL_PORT`
+- `MYSQL_USER`
+- `MYSQL_PASSWORD`
+- `MYSQL_DATABASE`
 
-The intent model is trained and evaluated on **BANKING77**, a public banking customer-service intent dataset containing 13,083 queries across 77 fine-grained intents: 10,003 training examples and 3,080 test examples.
+Run `schema.sql` once against the database. It creates `customer_analyses` plus the Power BI views:
 
-The project maps the 77 original intents into four business-level routing groups for a simpler support workflow.
+- `powerbi_customer_analytics`
+- `powerbi_daily_summary`
 
-## Model training
+The app also calls the schema initialization safely on startup/use, so the tables/views are created automatically when the database user has permission.
 
-If the dataset files are missing:
+For deployment, use environment variables or Streamlit Secrets. **Never commit real database credentials.** See `.env.example`.
 
-```bash
-python download_data.py
-```
+## Streamlit dashboard
 
-Train and evaluate:
+The sidebar now has two modes:
 
-```bash
-python train.py
-```
+1. **Analyzer** — run the AI classifier and save results to MySQL.
+2. **Dashboard** — live KPI cards, intent volume, sentiment, urgency, routing charts, recent records, and CSV export.
 
-This creates:
+Dashboard KPIs include total analyses, high-urgency cases, negative sentiment, average intent confidence, and auto-routable rate.
 
-- `model.pkl` — trained TF-IDF + Logistic Regression pipeline
-- `metrics.json` — held-out test metrics and confusion matrix
+## Power BI
 
-## Run the app
+See `powerbi/README.md` for the recommended Power BI model. Connect Power BI Desktop to the same MySQL database and import the two views listed above.
+
+Suggested report pages/visuals:
+
+- Total analyses
+- High urgency cases
+- Negative sentiment
+- Average confidence
+- Auto-routable rate
+- Intent distribution
+- Sentiment distribution
+- Urgency distribution
+- Daily volume
+- Routing status
+- Customer-level analysis table
+
+## Model evaluation
+
+The included intent model was trained on 10,003 BANKING77 training examples and evaluated on 3,080 untouched test examples.
+
+- **Accuracy: 92.89%**
+- **Macro F1: 92.89%**
+
+These are intent-routing metrics, not production performance guarantees.
+
+## Run locally
 
 ```bash
 pip install -r requirements.txt
@@ -82,32 +106,17 @@ streamlit run app.py
 
 The first run downloads the pretrained RoBERTa sentiment model from Hugging Face.
 
-## Current offline evaluation
+## Project structure
 
-The included intent model was trained on 10,003 BANKING77 training examples and evaluated on the untouched 3,080-example test set.
-
-Current four-class intent-routing performance:
-
-- **Accuracy: 92.89%**
-- **Macro F1: 92.89%**
-
-These are **intent-routing metrics**, not sentiment metrics and not production performance guarantees.
-
-## Limitations
-
-- The four business categories are a project-level mapping of the original 77 intents.
-- The sentiment model is a general-purpose pretrained model, not a financial-domain sentiment model.
-- Urgency is a transparent rule layer, not a learned urgency model.
-- Real production deployment would require monitoring, human review for low-confidence cases, privacy controls, and domain-specific validation.
-- Sentiment predictions should be treated as model-assisted signals rather than ground truth.
-
-## Project improvements
-
-The current version improves the prototype by:
-
-- using a substantially larger labeled intent dataset;
-- evaluating on a separate held-out test set;
-- using actual model probabilities rather than hard-coded 100% confidence;
-- supporting a neutral sentiment class;
-- recognizing time-sensitive urgency phrases such as `soon`, `ASAP`, `today`, and `as soon as possible`;
-- providing a clear-conversation control for repeated testing.
+```text
+app.py                 # Streamlit analyzer + dashboard
+model.pkl              # trained intent model
+metrics.json           # evaluation metrics
+database.py            # MySQL connection + persistence + analytics queries
+schema.sql             # MySQL tables + Power BI views
+powerbi/README.md      # Power BI connection/model guide
+.env.example           # safe configuration template
+requirements.txt       # runtime dependencies
+train.py               # model training
+download_data.py       # BANKING77 download helper
+```
