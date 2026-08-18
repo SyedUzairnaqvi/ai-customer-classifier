@@ -2,6 +2,12 @@
 
 A hybrid NLP application for financial customer-support analysis.
 
+## Live Demo
+
+**Streamlit App:** https://ai-customer-classifier-v6yuiq2aqqdhooajzs3eum.streamlit.app/
+
+**Current release:** FINAL — this repository is using the `ai_customer_insight_analyzer_FINAL` project version as the main/root version.
+
 ## What it does
 
 Given a customer message, the system produces:
@@ -105,4 +111,3 @@ The current version improves the prototype by:
 - supporting a neutral sentiment class;
 - recognizing time-sensitive urgency phrases such as `soon`, `ASAP`, `today`, and `as soon as possible`;
 - providing a clear-conversation control for repeated testing.
-
