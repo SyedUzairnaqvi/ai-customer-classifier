@@ -16,6 +16,7 @@ from database import (
     bulk_insert_analyses,
     create_batch,
     fetch_batch_history,
+    fetch_dashboard_data,
     fetch_recent_analyses,
     init_database,
     insert_analysis,
@@ -87,55 +88,47 @@ def dashboard():
         return
     try:
         init_database()
+        summary = fetch_dashboard_data()
         df = fetch_recent_analyses(5000)
     except Exception as exc:
         st.error(f"MySQL connection failed: {exc}")
         return
-    if df.empty:
+    total = int(summary["total"])
+    if total == 0:
         st.info("No customer analyses have been stored yet. Run an analysis or upload a batch from the Batch Analyzer tab.")
         return
 
-    for numeric_col in ["intent_confidence", "sentiment_confidence"]:
-        if numeric_col in df.columns:
-            df[numeric_col] = pd.to_numeric(df[numeric_col], errors="coerce")
-
-    total = len(df)
-    high = int((df["urgency"] == "High").sum())
-    negative = int((df["sentiment"] == "Negative").sum())
-    auto = int((df["routing_status"] == "Auto-Routable").sum())
-    avg_conf = float(df["intent_confidence"].mean() * 100)
+    high = int(summary["high"])
+    negative = int(summary["negative"])
+    auto = int(summary["auto_routable"])
+    avg_conf = float(summary["avg_confidence"] * 100)
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Recent Analyses", f"{total:,}")
+    c1.metric("Total Analyses", f"{total:,}")
     c2.metric("High Urgency", f"{high:,}")
     c3.metric("Negative", f"{negative:,}")
     c4.metric("Avg Confidence", f"{avg_conf:.1f}%")
     c5.metric("Auto-Routable", f"{auto / total * 100:.1f}%")
-    st.caption("Dashboard displays the latest 5,000 records for responsive analytics. MySQL retains the full history.")
+    st.caption("KPIs and charts use the full MySQL history. The table below shows the latest 5,000 records for responsive UI.")
     st.divider()
+
     col1, col2 = st.columns(2)
     with col1:
-        intent_counts = df["intent"].value_counts().reset_index()
-        intent_counts.columns = ["intent", "count"]
-        st.plotly_chart(px.bar(intent_counts, x="intent", y="count", title="Customer Intent Volume"), use_container_width=True)
+        st.plotly_chart(px.bar(summary["intent"], x="intent", y="count", title="Customer Intent Volume"), use_container_width=True)
     with col2:
-        sentiment_counts = df["sentiment"].value_counts().reset_index()
-        sentiment_counts.columns = ["sentiment", "count"]
-        st.plotly_chart(px.pie(sentiment_counts, names="sentiment", values="count", title="Sentiment Distribution"), use_container_width=True)
+        st.plotly_chart(px.pie(summary["sentiment"], names="sentiment", values="count", title="Sentiment Distribution"), use_container_width=True)
     col3, col4 = st.columns(2)
     with col3:
-        urgency_counts = df["urgency"].value_counts().reindex(["High", "Medium", "Low"]).fillna(0).reset_index()
-        urgency_counts.columns = ["urgency", "count"]
+        urgency_counts = summary["urgency"].set_index("urgency").reindex(["High", "Medium", "Low"]).fillna(0).reset_index()
         st.plotly_chart(px.bar(urgency_counts, x="urgency", y="count", title="Urgency Breakdown"), use_container_width=True)
     with col4:
-        routing_counts = df["routing_status"].value_counts().reset_index()
-        routing_counts.columns = ["routing_status", "count"]
-        st.plotly_chart(px.bar(routing_counts, x="routing_status", y="count", title="Routing Status"), use_container_width=True)
+        st.plotly_chart(px.bar(summary["routing"], x="routing_status", y="count", title="Routing Status"), use_container_width=True)
 
     st.subheader("Recent Customer Analyses")
     display = df.copy()
-    display["intent_confidence"] = display["intent_confidence"].mul(100).round(1).map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
-    if "sentiment_confidence" in display.columns:
-        display["sentiment_confidence"] = display["sentiment_confidence"].mul(100).round(1).map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+    for numeric_col in ["intent_confidence", "sentiment_confidence"]:
+        if numeric_col in display.columns:
+            display[numeric_col] = pd.to_numeric(display[numeric_col], errors="coerce")
+            display[numeric_col] = display[numeric_col].mul(100).round(1).map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
     st.dataframe(display, use_container_width=True, hide_index=True)
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Export Recent Analytics CSV", csv, "customer_analytics_recent.csv", "text/csv")
@@ -200,12 +193,11 @@ def analyzer():
 def batch_analyzer():
     st.title("⚡ High-Volume Customer Analyzer")
     st.caption("Batch NLP + bulk MySQL ingestion for up to 50,000 customer messages per upload")
-
     if not is_database_configured():
         st.error("MySQL must be connected before running a batch.")
         return
 
-    st.info("Upload a CSV with a customer-message column. The pipeline runs intent inference in bulk, RoBERTa sentiment in batches, applies urgency rules, and bulk-inserts results into MySQL.")
+    st.info("Upload a CSV with a customer-message column. Intent runs in bulk, RoBERTa sentiment runs in batches, urgency/routing are applied, and results are bulk-inserted into MySQL.")
     uploaded = st.file_uploader("Upload customer messages CSV", type=["csv"], help="Recommended format: customer_id,message. Maximum 50,000 non-empty messages per upload.")
 
     if uploaded is not None:
@@ -217,7 +209,6 @@ def batch_analyzer():
         if df_input.empty:
             st.warning("The CSV is empty.")
             return
-
         preferred = [c for c in df_input.columns if c.lower() in {"message", "text", "customer_message", "feedback", "comment"}]
         message_column = st.selectbox("Message column", list(df_input.columns), index=list(df_input.columns).index(preferred[0]) if preferred else 0)
         clean = normalize_messages(df_input, message_column)
@@ -226,7 +217,7 @@ def batch_analyzer():
             return
         st.write(f"**{len(clean):,} messages ready for processing**")
         st.dataframe(clean[[message_column]].head(10), use_container_width=True, hide_index=True)
-        batch_size = st.select_slider("NLP batch size", options=[8, 16, 32, 64, 96, 128], value=32, help="Higher values are faster when the machine has enough RAM. Reduce if memory becomes tight.")
+        batch_size = st.select_slider("NLP batch size", options=[8, 16, 32, 64, 96, 128], value=32, help="Higher values can be faster when enough RAM is available. Reduce if memory becomes tight.")
         start = st.button("🚀 Process & Store Batch", type="primary", use_container_width=True)
 
         if start:
@@ -255,7 +246,6 @@ def batch_analyzer():
                 progress.progress(1.0, text="Batch completed")
                 st.success(f"✓ {total_inserted:,} customer messages analyzed and stored in MySQL in {elapsed/60:.1f} minutes.")
                 st.caption(f"Batch ID: {batch_id} • Average throughput: {total_inserted/elapsed:,.1f} messages/sec")
-                st.balloons()
             except Exception as exc:
                 update_batch(batch_id, total_inserted, "Failed")
                 st.error(f"Batch stopped after {total_inserted:,} rows: {exc}")
@@ -276,7 +266,8 @@ def batch_analyzer():
 if "page" not in st.session_state: st.session_state.page = "Analyzer"
 with st.sidebar:
     st.markdown("## AI Customer Insight")
-    st.session_state.page = st.radio("Navigation", ["Analyzer", "Batch Analyzer", "Dashboard"], index=["Analyzer", "Batch Analyzer", "Dashboard"].index(st.session_state.page) if st.session_state.page in ["Analyzer", "Batch Analyzer", "Dashboard"] else 0)
+    pages = ["Analyzer", "Batch Analyzer", "Dashboard"]
+    st.session_state.page = st.radio("Navigation", pages, index=pages.index(st.session_state.page) if st.session_state.page in pages else 0)
     st.divider()
     db_status = "🟢 MySQL Connected" if is_database_configured() else "🟡 MySQL Not Configured"
     st.caption(db_status)
