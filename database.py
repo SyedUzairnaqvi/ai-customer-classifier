@@ -35,10 +35,16 @@ def is_database_configured() -> bool:
 
 
 def _config(include_database: bool = True) -> dict:
+    user = _secret("MYSQL_USER")
+    # TiDB Cloud Starter shared endpoints require the instance-specific
+    # username prefix. Secure Vision's existing TiDB user uses this prefix.
+    if user == "root":
+        user = "3CnPSAnxy3nbikJ.root"
+
     config = {
         "host": _secret("MYSQL_HOST", "localhost"),
         "port": int(_secret("MYSQL_PORT", "3306")),
-        "user": _secret("MYSQL_USER"),
+        "user": user,
         "password": _secret("MYSQL_PASSWORD"),
         "connection_timeout": int(_secret("MYSQL_CONNECT_TIMEOUT", "10")),
         "use_pure": True,
@@ -46,9 +52,6 @@ def _config(include_database: bool = True) -> dict:
     if include_database:
         config["database"] = _secret("MYSQL_DATABASE")
 
-    # TiDB Cloud uses TLS on port 4000. Render's CA path is not available
-    # inside Streamlit Cloud, so use an explicit CA path when supplied and
-    # otherwise use the standard public CA bundle available in Python.
     ca_path = _secret("MYSQL_SSL_CA")
     if not ca_path or not Path(ca_path).is_file():
         ca_path = certifi.where()
@@ -96,34 +99,15 @@ def init_database() -> bool:
             conn.close()
 
 
-def insert_analysis(
-    message: str,
-    intent: str,
-    intent_confidence: float,
-    sentiment: str,
-    sentiment_confidence: float,
-    urgency: str,
-    routing_status: str,
-) -> None:
+def insert_analysis(message: str, intent: str, intent_confidence: float, sentiment: str, sentiment_confidence: float, urgency: str, routing_status: str) -> None:
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            """
-            INSERT INTO customer_analyses
-            (message, intent, intent_confidence, sentiment,
-             sentiment_confidence, urgency, routing_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                message,
-                intent,
-                intent_confidence,
-                sentiment,
-                sentiment_confidence,
-                urgency,
-                routing_status,
-            ),
+            """INSERT INTO customer_analyses
+            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status),
         )
         conn.commit()
     finally:
@@ -143,24 +127,9 @@ def _read_query(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
 
 
 def fetch_analytics() -> pd.DataFrame:
-    return _read_query(
-        """
-        SELECT analysis_id, created_at, message, intent, intent_confidence,
-               sentiment, sentiment_confidence, urgency, routing_status
-        FROM customer_analyses
-        ORDER BY created_at DESC
-        """
-    )
+    return _read_query("""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status FROM customer_analyses ORDER BY created_at DESC""")
 
 
 def fetch_recent_analyses(limit: int = 25) -> pd.DataFrame:
     limit = max(1, min(int(limit), 500))
-    return _read_query(
-        f"""
-        SELECT analysis_id, created_at, message, intent, intent_confidence,
-               sentiment, urgency, routing_status
-        FROM customer_analyses
-        ORDER BY created_at DESC
-        LIMIT {limit}
-        """
-    )
+    return _read_query(f"""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, urgency, routing_status FROM customer_analyses ORDER BY created_at DESC LIMIT {limit}""")
