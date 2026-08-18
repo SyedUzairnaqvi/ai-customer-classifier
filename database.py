@@ -153,10 +153,7 @@ def update_batch(batch_id: str, processed_rows: int, status: str) -> None:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "UPDATE analysis_batches SET processed_rows=%s, status=%s WHERE batch_id=%s",
-            (processed_rows, status, batch_id),
-        )
+        cursor.execute("UPDATE analysis_batches SET processed_rows=%s, status=%s WHERE batch_id=%s", (processed_rows, status, batch_id))
         conn.commit()
     finally:
         cursor.close()
@@ -167,6 +164,43 @@ def fetch_batch_history(limit: int = 20) -> pd.DataFrame:
     limit = max(1, min(int(limit), 100))
     return _read_query(f"""SELECT batch_id, created_at, source_name, total_rows, processed_rows, status
         FROM analysis_batches ORDER BY created_at DESC LIMIT {limit}""")
+
+
+def fetch_dashboard_data() -> dict[str, object]:
+    """Return full-history KPIs/groupings using SQL aggregation, not Python row loading."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""SELECT COUNT(*) AS total,
+            SUM(urgency='High') AS high,
+            SUM(sentiment='Negative') AS negative,
+            SUM(routing_status='Auto-Routable') AS auto_routable,
+            COALESCE(AVG(intent_confidence), 0) AS avg_confidence
+            FROM customer_analyses""")
+        kpi = cursor.fetchone() or {}
+
+        queries = {
+            "intent": "SELECT intent, COUNT(*) AS count FROM customer_analyses GROUP BY intent ORDER BY count DESC",
+            "sentiment": "SELECT sentiment, COUNT(*) AS count FROM customer_analyses GROUP BY sentiment ORDER BY count DESC",
+            "urgency": "SELECT urgency, COUNT(*) AS count FROM customer_analyses GROUP BY urgency ORDER BY count DESC",
+            "routing": "SELECT routing_status, COUNT(*) AS count FROM customer_analyses GROUP BY routing_status ORDER BY count DESC",
+        }
+        groups = {}
+        for key, query in queries.items():
+            cursor.execute(query)
+            groups[key] = pd.DataFrame(cursor.fetchall())
+        total = int(kpi.get("total") or 0)
+        return {
+            "total": total,
+            "high": int(kpi.get("high") or 0),
+            "negative": int(kpi.get("negative") or 0),
+            "auto_routable": int(kpi.get("auto_routable") or 0),
+            "avg_confidence": float(kpi.get("avg_confidence") or 0),
+            **groups,
+        }
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def _read_query(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
@@ -184,6 +218,6 @@ def fetch_analytics() -> pd.DataFrame:
     return _read_query("""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status, batch_id FROM customer_analyses ORDER BY created_at DESC""")
 
 
-def fetch_recent_analyses(limit: int = 500) -> pd.DataFrame:
+def fetch_recent_analyses(limit: int = 5000) -> pd.DataFrame:
     limit = max(1, min(int(limit), 5000))
     return _read_query(f"""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, urgency, routing_status, batch_id FROM customer_analyses ORDER BY created_at DESC LIMIT {limit}""")
