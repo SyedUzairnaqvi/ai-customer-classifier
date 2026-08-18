@@ -7,3 +7,4 @@ torch>=2.2,<3
 gtts>=2.5,<3
 mysql-connector-python>=9.0,<10
 plotly>=5.20,<7
+certifi>=2024.2.2,<2027
