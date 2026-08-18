@@ -79,6 +79,13 @@ def dashboard():
     if df.empty:
         st.info("No customer analyses have been stored yet. Run an analysis from the Analyzer tab.")
         return
+
+    # MySQL DECIMAL values can arrive in pandas as object/Decimal dtype.
+    # Convert analytics confidence fields explicitly before calculations/display.
+    for numeric_col in ["intent_confidence", "sentiment_confidence"]:
+        if numeric_col in df.columns:
+            df[numeric_col] = pd.to_numeric(df[numeric_col], errors="coerce")
+
     total = len(df)
     high = int((df["urgency"] == "High").sum())
     negative = int((df["sentiment"] == "Negative").sum())
@@ -109,9 +116,13 @@ def dashboard():
         routing_counts = df["routing_status"].value_counts().reset_index()
         routing_counts.columns = ["routing_status", "count"]
         st.plotly_chart(px.bar(routing_counts, x="routing_status", y="count", title="Routing Status"), use_container_width=True)
+
     st.subheader("Recent Customer Analyses")
     display = df.copy()
-    display["intent_confidence"] = (display["intent_confidence"] * 100).round(1).astype(str) + "%"
+    # Keep the raw dataframe numeric for export while formatting only the UI copy.
+    display["intent_confidence"] = display["intent_confidence"].mul(100).round(1).map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
+    if "sentiment_confidence" in display.columns:
+        display["sentiment_confidence"] = display["sentiment_confidence"].mul(100).round(1).map(lambda x: f"{x:.1f}%" if pd.notna(x) else "—")
     st.dataframe(display, use_container_width=True, hide_index=True)
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Export Analytics CSV", csv, "customer_analytics.csv", "text/csv")
