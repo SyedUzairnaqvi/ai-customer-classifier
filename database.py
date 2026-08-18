@@ -13,6 +13,7 @@ except Exception:
 
 BASE_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = BASE_DIR / "schema.sql"
+BATCH_SCHEMA_PATH = BASE_DIR / "batch_schema.sql"
 
 
 def _secret(name: str, default: str = "") -> str:
@@ -36,8 +37,6 @@ def is_database_configured() -> bool:
 
 def _config(include_database: bool = True) -> dict:
     user = _secret("MYSQL_USER")
-    # TiDB Cloud Starter shared endpoints require the instance-specific
-    # username prefix. Secure Vision's existing TiDB user uses this prefix.
     if user == "root":
         user = "3CnPSAnxy3nbikJ.root"
 
@@ -55,41 +54,37 @@ def _config(include_database: bool = True) -> dict:
     ca_path = _secret("MYSQL_SSL_CA")
     if not ca_path or not Path(ca_path).is_file():
         ca_path = certifi.where()
-
-    config.update(
-        {
-            "ssl_ca": ca_path,
-            "ssl_verify_cert": True,
-            "ssl_verify_identity": True,
-            "tls_versions": ["TLSv1.2", "TLSv1.3"],
-        }
-    )
+    config.update({
+        "ssl_ca": ca_path,
+        "ssl_verify_cert": True,
+        "ssl_verify_identity": True,
+        "tls_versions": ["TLSv1.2", "TLSv1.3"],
+    })
     return config
 
 
 def get_connection():
     if not is_database_configured():
-        raise RuntimeError(
-            "MySQL is not configured. Set MYSQL_HOST, MYSQL_PORT, MYSQL_USER, "
-            "MYSQL_PASSWORD and MYSQL_DATABASE."
-        )
+        raise RuntimeError("MySQL is not configured. Set MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD and MYSQL_DATABASE.")
     return mysql.connector.connect(**_config())
 
 
+def _run_schema_file(cursor, path: Path) -> None:
+    for statement in path.read_text(encoding="utf-8").split(";"):
+        statement = statement.strip()
+        if statement:
+            cursor.execute(statement)
+
+
 def init_database() -> bool:
-    """Create the analytics table and Power BI views if they do not exist."""
     conn = None
     cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        statements = [
-            statement.strip()
-            for statement in SCHEMA_PATH.read_text(encoding="utf-8").split(";")
-            if statement.strip()
-        ]
-        for statement in statements:
-            cursor.execute(statement)
+        _run_schema_file(cursor, SCHEMA_PATH)
+        if BATCH_SCHEMA_PATH.exists():
+            _run_schema_file(cursor, BATCH_SCHEMA_PATH)
         conn.commit()
         return True
     finally:
@@ -99,20 +94,79 @@ def init_database() -> bool:
             conn.close()
 
 
-def insert_analysis(message: str, intent: str, intent_confidence: float, sentiment: str, sentiment_confidence: float, urgency: str, routing_status: str) -> None:
+def insert_analysis(message: str, intent: str, intent_confidence: float, sentiment: str, sentiment_confidence: float, urgency: str, routing_status: str, batch_id: Optional[str] = None) -> None:
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
             """INSERT INTO customer_analyses
-            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status),
+            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status, batch_id),
         )
         conn.commit()
     finally:
         cursor.close()
         conn.close()
+
+
+def create_batch(batch_id: str, source_name: str, total_rows: int) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO analysis_batches (batch_id, source_name, total_rows, processed_rows, status) VALUES (%s, %s, %s, 0, 'Processing')",
+            (batch_id, source_name[:255], total_rows),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def bulk_insert_analyses(rows: list[dict], batch_id: str, chunk_size: int = 1000) -> int:
+    if not rows:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    sql = """INSERT INTO customer_analyses
+        (message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status, batch_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
+    inserted = 0
+    try:
+        values = [(
+            row["message"], row["intent"], row["intent_confidence"], row["sentiment"],
+            row["sentiment_confidence"], row["urgency"], row["routing_status"], batch_id
+        ) for row in rows]
+        for start in range(0, len(values), chunk_size):
+            chunk = values[start:start + chunk_size]
+            cursor.executemany(sql, chunk)
+            inserted += len(chunk)
+        conn.commit()
+        return inserted
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def update_batch(batch_id: str, processed_rows: int, status: str) -> None:
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE analysis_batches SET processed_rows=%s, status=%s WHERE batch_id=%s",
+            (processed_rows, status, batch_id),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def fetch_batch_history(limit: int = 20) -> pd.DataFrame:
+    limit = max(1, min(int(limit), 100))
+    return _read_query(f"""SELECT batch_id, created_at, source_name, total_rows, processed_rows, status
+        FROM analysis_batches ORDER BY created_at DESC LIMIT {limit}""")
 
 
 def _read_query(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
@@ -127,9 +181,9 @@ def _read_query(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
 
 
 def fetch_analytics() -> pd.DataFrame:
-    return _read_query("""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status FROM customer_analyses ORDER BY created_at DESC""")
+    return _read_query("""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, sentiment_confidence, urgency, routing_status, batch_id FROM customer_analyses ORDER BY created_at DESC""")
 
 
-def fetch_recent_analyses(limit: int = 25) -> pd.DataFrame:
-    limit = max(1, min(int(limit), 500))
-    return _read_query(f"""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, urgency, routing_status FROM customer_analyses ORDER BY created_at DESC LIMIT {limit}""")
+def fetch_recent_analyses(limit: int = 500) -> pd.DataFrame:
+    limit = max(1, min(int(limit), 5000))
+    return _read_query(f"""SELECT analysis_id, created_at, message, intent, intent_confidence, sentiment, urgency, routing_status, batch_id FROM customer_analyses ORDER BY created_at DESC LIMIT {limit}""")
