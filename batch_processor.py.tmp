@@ -1,0 +1,2 @@
+# This marker file records that the high-volume batch processor has been reviewed.
+# The deployed processor remains batch_processor.py; update it only through a SHA-checked contents update.
